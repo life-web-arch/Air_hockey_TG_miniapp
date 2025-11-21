@@ -545,7 +545,7 @@
         /**
          * Ends the game, displays the result, reports the final state to the backend, and closes the app.
          */
-        async function endGame(winnerId) { // <--- MODIFICATION 1: Added 'async'
+        async function endGame(winnerId) {
             if (!isGameRunning) return; 
 
             isGameRunning = false;
@@ -556,6 +556,7 @@
 
             gameState.winner_id = winnerId;
             
+            // Update UI
             if (winnerId === user_id) {
                 gameOverTitle.textContent = "YOU WIN!";
                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
@@ -563,24 +564,42 @@
                 gameOverTitle.textContent = "YOU LOSE";
                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
             }
+            
+            // Show "Sending..." status
+            const closeBtn = document.getElementById('close-button');
+            if(closeBtn) closeBtn.style.display = 'none'; // Hide close button initially
+            
+            const statusP = document.createElement('p');
+            statusP.textContent = "📡 Sending results to bot...";
+            statusP.style.color = '#00ffff';
+            statusP.id = 'sending-status';
+            document.getElementById('game-over-screen').appendChild(statusP);
+            
             gameOverScreen.style.display = 'flex';
             
-            // --- [CRITICAL MODIFICATION 2: AWAIT THE FINAL UPDATE] ---
-            // We now explicitly wait for the server to acknowledge the final game state.
-            // This ensures the bot's _end_game logic is triggered before we proceed.
-            console.log("Sending final game state to server and awaiting response...");
-            try {
-                await updateGameStateOnServer();
-                console.log("Server acknowledged final state.");
-            } catch (e) {
-                console.error("Failed to send final game state:", e);
-                // Even if it fails, we still close the app. The bot will have a timeout.
+            // [CRITICAL FIX] Retry loop to ensure data reaches the server
+            let sentSuccessfully = false;
+            for (let i = 0; i < 5; i++) { // Try 5 times
+                try {
+                    console.log(`Attempt ${i+1}: Sending final state...`);
+                    const response = await updateGameStateOnServer();
+                    if (response && response.ok) {
+                        sentSuccessfully = true;
+                        statusP.textContent = "✅ Results Sent! Closing...";
+                        console.log("Server acknowledged final state.");
+                        break;
+                    }
+                } catch (e) {
+                    console.error("Failed to send final state:", e);
+                    statusP.textContent = `⚠️ Retrying connection (${i+1}/5)...`;
+                    await new Promise(r => setTimeout(r, 1000)); // Wait 1s before retry
+                }
             }
-            
-            // The close timer only starts AFTER the server has been successfully notified.
+
+            // Close app only after attempt or success
             setTimeout(() => {
                 tg.close();
-            }, 4000); 
+            }, 2000); 
         }
         
 
@@ -809,7 +828,8 @@
          */
         async function updateGameStateOnServer() {
             try {
-                await fetch(`${tunnel_url}/airhockey/update_state`, {
+                // [CRITICAL MODIFICATION] Return the fetch promise so we can await it
+                return await fetch(`${tunnel_url}/airhockey/update_state`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -819,6 +839,7 @@
                 });
             } catch (error) {
                 console.error("Update state failed:", error);
+                throw error; // Re-throw to handle in endGame
             }
         }
 
