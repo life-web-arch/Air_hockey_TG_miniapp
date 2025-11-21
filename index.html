@@ -307,15 +307,22 @@
             puck.x = width / 2;
             puck.y = height / 2;
             puck.vx = 0;
-            puck.vy = scorer === 'player' ? -5 : 5; // Serve the puck
+            
+            // [MODIFICATION] Scale the puck's serve speed with the screen height for a consistent game feel.
+            const serveSpeed = height * 0.01;
+            puck.vy = scorer === 'player' ? -serveSpeed : serveSpeed;
 
             player.x = width / 2;
             player.y = height - (height * 0.15);
             player.targetX = player.x;
             player.targetY = player.y;
+            player.prevX = player.x;
+            player.prevY = player.y;
 
             opponent.x = width / 2;
             opponent.y = height * 0.15;
+            opponent.vx = 0;
+            opponent.vy = 0;
 
             // Update state for server
             syncLocalStateToServerObjects();
@@ -360,45 +367,49 @@
         }
         
         /**
-         * Advanced Predictive AI for solo mode.
+         * Advanced State-Based AI for solo mode. This version is robust and will not freeze.
          */
         function updateAI() {
-            // Store previous position to calculate velocity for collisions
+            // Store the paddle's position from the previous frame to calculate its velocity
             const prevX = opponent.x;
             const prevY = opponent.y;
 
             let targetX, targetY;
-            
-            // --- AI Decision Making ---
-            if (puck.vy < 0 && puck.y < height * 0.75) {
-                // OFFENSIVE MODE: Puck is moving towards the AI's goal.
-                // Predict where the puck will cross the AI's defensive line.
-                const timeToIntercept = (puck.y - (height * 0.25)) / -puck.vy;
-                targetX = puck.x + puck.vx * timeToIntercept;
-                
-                // Aim for a point slightly behind the puck to hit it forward.
-                targetY = puck.y - opponent.radius;
+            const homeY = height * 0.20; // The AI's default defensive line
+
+            // --- AI STATE MACHINE ---
+
+            if (puck.y < height / 2 + puck.radius) {
+                // STATE 1: OFFENSIVE (Puck is in the AI's half)
+                // The AI's primary goal is to get behind the puck and hit it towards the player.
+                targetX = puck.x;
+                targetY = puck.y - opponent.radius; // Target a spot just "above" the puck to hit it down.
 
             } else {
-                // DEFENSIVE MODE: Puck is in the player's half or moving away.
-                // Return to a central defensive position.
+                // STATE 2: DEFENSIVE (Puck is in the player's half)
+                // The AI should return to its home position to guard the goal, tracking the puck's X.
                 targetX = width / 2;
-                targetY = height * 0.15;
+                targetY = homeY;
             }
 
-            // [CRITICAL FIX] Clamp the AI's TARGET position to prevent it from trying to go into a wall.
+            // --- [CRITICAL SAFETY CLAMP] ---
+            // This is the most important part of the fix. It ensures the AI's *target* is always
+            // within its playable area, preventing it from ever trying to move into or get stuck on a wall.
             targetX = Math.max(opponent.radius, Math.min(width - opponent.radius, targetX));
             targetY = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, targetY));
 
-            // --- AI Movement ---
+
+            // --- Smoothed Movement Logic ---
+            // Calculate the vector from the AI paddle's current position to its desired target position.
             const dx = targetX - opponent.x;
             const dy = targetY - opponent.y;
-            
-            // Apply smoothed movement
+
+            // Apply a fraction of the distance as movement for this frame. This creates a smooth ease-in effect.
             opponent.x += dx * AI_SPEED;
             opponent.y += dy * AI_SPEED;
             
-            // Calculate the AI's velocity for the physics engine
+            // Calculate the AI's velocity for the physics engine based on its actual movement this frame.
+            // This is crucial for making the AI's hits feel powerful and realistic.
             opponent.vx = opponent.x - prevX;
             opponent.vy = opponent.y - prevY;
         }
