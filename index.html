@@ -545,8 +545,8 @@
         /**
          * Ends the game, displays the result, reports the final state to the backend, and closes the app.
          */
-        function endGame(winnerId) {
-            if (!isGameRunning) return; // Prevent this function from running more than once
+        async function endGame(winnerId) { // <--- MODIFICATION 1: Added 'async'
+            if (!isGameRunning) return; 
 
             isGameRunning = false;
             cancelAnimationFrame(animationFrameId);
@@ -556,7 +556,6 @@
 
             gameState.winner_id = winnerId;
             
-            // --- Final UI Update ---
             if (winnerId === user_id) {
                 gameOverTitle.textContent = "YOU WIN!";
                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
@@ -566,17 +565,22 @@
             }
             gameOverScreen.style.display = 'flex';
             
-            // --- [CRITICAL MODIFICATION] ---
-            // Report the final game state to the server REGARDLESS of the mode.
-            // This is how the bot knows the game has ended and who won.
-            updateGameStateOnServer();
-
-            // --- [CRITICAL MODIFICATION] ---
-            // Automatically close the Mini App after a few seconds so the user
-            // is returned to the bot interface to see the final results and celebration image.
+            // --- [CRITICAL MODIFICATION 2: AWAIT THE FINAL UPDATE] ---
+            // We now explicitly wait for the server to acknowledge the final game state.
+            // This ensures the bot's _end_game logic is triggered before we proceed.
+            console.log("Sending final game state to server and awaiting response...");
+            try {
+                await updateGameStateOnServer();
+                console.log("Server acknowledged final state.");
+            } catch (e) {
+                console.error("Failed to send final game state:", e);
+                // Even if it fails, we still close the app. The bot will have a timeout.
+            }
+            
+            // The close timer only starts AFTER the server has been successfully notified.
             setTimeout(() => {
                 tg.close();
-            }, 4000); // Wait 4 seconds for the user to see the Game Over screen
+            }, 4000); 
         }
         
 
