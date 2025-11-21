@@ -191,12 +191,12 @@
 
         const WIN_SCORE = 7;
         const FRICTION = 0.991;
-        const PADDLE_SPEED = 0.3; // Interpolation factor for smoothness
+        const PADDLE_SPEED = 0.5; // Interpolation factor for smoothness (higher is more responsive)
         const AI_SPEED = 0.1;
 
-        const puck = { x: 0, y: 0, radius: 0, vx: 0, vy: 0 };
-        const player = { x: 0, y: 0, radius: 0, targetX: 0, targetY: 0 };
-        const opponent = { x: 0, y: 0, radius: 0 };
+        const puck = { x: 0, y: 0, radius: 0, vx: 0, vy: 0, mass: 1 };
+        const player = { x: 0, y: 0, radius: 0, targetX: 0, targetY: 0, prevX: 0, prevY: 0, mass: 10 };
+        const opponent = { x: 0, y: 0, radius: 0, vx: 0, vy: 0, mass: 10 }; // AI now has velocity properties
 
         let gameState = {
             puck: { x: 0, y: 0, vx: 0, vy: 0 },
@@ -337,6 +337,10 @@
          * Updates all game logic for one frame.
          */
         function update() {
+            // Store previous position for velocity calculation in physics engine
+            player.prevX = player.x;
+            player.prevY = player.y;
+
             // Player paddle movement (smoothed)
             player.x += (player.targetX - player.x) * PADDLE_SPEED;
             player.y += (player.targetY - player.y) * PADDLE_SPEED;
@@ -355,50 +359,48 @@
             syncLocalStateToServerObjects();
         }
         
-
         /**
-         * Advanced AI logic for solo mode.
-         * This version clamps the target to prevent getting stuck and slows down near the target.
+         * Advanced Predictive AI for solo mode.
          */
         function updateAI() {
-            // --- 1. Determine the AI's Target ---
-            let targetX = puck.x;
-            let targetY;
+            // Store previous position to calculate velocity for collisions
+            const prevX = opponent.x;
+            const prevY = opponent.y;
 
-            // Offensive vs. Defensive Stance
-            if (puck.y < height * 0.6) {
-                // Puck is on or approaching the AI's side, play offensively.
-                // Try to get behind the puck to hit it forward.
-                targetY = puck.y - puck.radius;
+            let targetX, targetY;
+            
+            // --- AI Decision Making ---
+            if (puck.vy < 0 && puck.y < height * 0.75) {
+                // OFFENSIVE MODE: Puck is moving towards the AI's goal.
+                // Predict where the puck will cross the AI's defensive line.
+                const timeToIntercept = (puck.y - (height * 0.25)) / -puck.vy;
+                targetX = puck.x + puck.vx * timeToIntercept;
+                
+                // Aim for a point slightly behind the puck to hit it forward.
+                targetY = puck.y - opponent.radius;
+
             } else {
-                // Puck is on the player's side, return to a defensive position.
+                // DEFENSIVE MODE: Puck is in the player's half or moving away.
+                // Return to a central defensive position.
+                targetX = width / 2;
                 targetY = height * 0.15;
             }
 
-            // --- 2. [CRITICAL FIX] Clamp the AI's TARGET position ---
-            // This makes the AI "aware" of the walls and prevents it from trying to move into them.
+            // [CRITICAL FIX] Clamp the AI's TARGET position to prevent it from trying to go into a wall.
             targetX = Math.max(opponent.radius, Math.min(width - opponent.radius, targetX));
             targetY = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, targetY));
 
-            // --- 3. Calculate Smoothed Movement ---
+            // --- AI Movement ---
             const dx = targetX - opponent.x;
             const dy = targetY - opponent.y;
-            const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
-
-            // Dynamically adjust speed: slow down when very close to the target to prevent jittering.
-            let currentAiSpeed = AI_SPEED;
-            if (distanceToTarget < 50) {
-                currentAiSpeed *= (distanceToTarget / 50);
-            }
-
-            // Apply the movement
-            opponent.x += dx * currentAiSpeed;
-            opponent.y += dy * currentAiSpeed;
-
-            // --- 4. Final Position Clamp (as a safety measure) ---
-            // This ensures the paddle never glitches outside its designated half of the board.
-            opponent.x = Math.max(opponent.radius, Math.min(width - opponent.radius, opponent.x));
-            opponent.y = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, opponent.y));
+            
+            // Apply smoothed movement
+            opponent.x += dx * AI_SPEED;
+            opponent.y += dy * AI_SPEED;
+            
+            // Calculate the AI's velocity for the physics engine
+            opponent.vx = opponent.x - prevX;
+            opponent.vy = opponent.y - prevY;
         }
         
         /**
@@ -472,35 +474,57 @@
          * Checks for and resolves collisions between puck and paddles.
          */
         function checkCollisions() {
-            resolvePaddleCollision(player);
-            resolvePaddleCollision(opponent);
+            resolvePaddleCollision(player, false);
+            resolvePaddleCollision(opponent, true);
         }
         
-        function resolvePaddleCollision(paddle) {
+        
+        function resolvePaddleCollision(paddle, isOpponent = false) {
             const dx = puck.x - paddle.x;
             const dy = puck.y - paddle.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
             const minDistance = puck.radius + paddle.radius;
             
             if (distance < minDistance) {
-                // Resolve overlap
+                // 1. Resolve Overlap
                 const overlap = minDistance - distance;
                 const angle = Math.atan2(dy, dx);
+                // Push the puck out of the paddle
                 puck.x += Math.cos(angle) * overlap;
                 puck.y += Math.sin(angle) * overlap;
                 
-                // Elastic collision
+                // 2. Calculate Paddle Velocity
+                let paddleVx, paddleVy;
+                if (isOpponent) {
+                    paddleVx = opponent.vx;
+                    paddleVy = opponent.vy;
+                } else {
+                    // Player's velocity is the change in position since the last frame
+                    paddleVx = player.x - player.prevX;
+                    paddleVy = player.y - player.prevY;
+                }
+
+                // 3. Realistic Momentum Transfer (Elastic Collision)
                 const normalX = dx / distance;
                 const normalY = dy / distance;
-                const dotProduct = puck.vx * normalX + puck.vy * normalY;
-                
-                puck.vx -= 2 * dotProduct * normalX;
-                puck.vy -= 2 * dotProduct * normalY;
 
-                // Add a "kick" from paddle's momentum (approximated)
-                if (paddle === player) {
-                    puck.vx += (player.x - (player.x - (player.targetX-player.x)*PADDLE_SPEED*5)) * 0.1;
-                    puck.vy += (player.y - (player.y - (player.targetY-player.y)*PADDLE_SPEED*5)) * 0.1;
+                // Project velocities onto the normal
+                const paddleVelNormal = paddleVx * normalX + paddleVy * normalY;
+                const puckVelNormal = puck.vx * normalX + puck.vy * normalY;
+
+                // Conservation of momentum and kinetic energy formula for 1D collision
+                const newPuckVelNormal = (puckVelNormal * (puck.mass - paddle.mass) + 2 * paddle.mass * paddleVelNormal) / (puck.mass + paddle.mass);
+
+                // Update puck velocity based on the new normal velocity
+                puck.vx += (newPuckVelNormal - puckVelNormal) * normalX;
+                puck.vy += (newPuckVelNormal - puckVelNormal) * normalY;
+                
+                // 4. Cap the puck's speed to prevent extreme velocities
+                const MAX_SPEED = width / 25; // Scale max speed with screen size
+                const speed = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
+                if (speed > MAX_SPEED) {
+                    puck.vx = (puck.vx / speed) * MAX_SPEED;
+                    puck.vy = (puck.vy / speed) * MAX_SPEED;
                 }
             }
         }
@@ -720,3 +744,4 @@
 </script>
 </body>
 </html>
+
