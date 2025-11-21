@@ -205,6 +205,7 @@
             scores: { p1: 0, p2: 0 },
             winner_id: null
         };
+        let particles = []; 
         
         // --- 3. CORE LOGIC ---
 
@@ -367,49 +368,59 @@
         }
         
         /**
-         * Advanced State-Based AI for solo mode. This version is robust and will not freeze.
+         * Advanced, State-Based AI Engine v3. This version is designed to be much more human-like,
+         * with distinct offensive and defensive behaviors to prevent freezing and own-goals.
          */
         function updateAI() {
-            // Store the paddle's position from the previous frame to calculate its velocity
+            // Store previous position to calculate velocity for realistic collisions
             const prevX = opponent.x;
             const prevY = opponent.y;
 
             let targetX, targetY;
-            const homeY = height * 0.20; // The AI's default defensive line
+            const defensiveLineY = height * 0.25; // A safe line to defend from
+            const centerStanceX = width / 2;
 
-            // --- AI STATE MACHINE ---
+            // --- AI DECISION TREE ---
 
-            if (puck.y < height / 2 + puck.radius) {
-                // STATE 1: OFFENSIVE (Puck is in the AI's half)
-                // The AI's primary goal is to get behind the puck and hit it towards the player.
+            if (puck.y < height * 0.5 && puck.vy < 1) {
+                // --- OFFENSIVE MODE ---
+                // The puck is in our half and not moving quickly away from us. Let's attack it!
+                // We will aim for a position slightly behind the puck to strike it towards the player.
                 targetX = puck.x;
-                targetY = puck.y - opponent.radius; // Target a spot just "above" the puck to hit it down.
+                targetY = puck.y + puck.radius; // Aim slightly below the puck to hit it down.
+
+            } else if (puck.vy > 0 && puck.y > height * 0.4) {
+                // --- DEFENSIVE MODE ---
+                // The puck is moving towards our goal from the player's side.
+                // Let's retreat to our defensive line and mirror the puck's X position to block.
+                targetX = puck.x;
+                targetY = defensiveLineY;
 
             } else {
-                // STATE 2: DEFENSIVE (Puck is in the player's half)
-                // The AI should return to its home position to guard the goal, tracking the puck's X.
-                targetX = width / 2;
-                targetY = homeY;
+                // --- NEUTRAL/RESET MODE ---
+                // The puck is slow, on the other side of the table, or moving away.
+                // Let's return to the center of our defensive line to be ready for anything.
+                targetX = centerStanceX;
+                targetY = defensiveLineY;
             }
 
-            // --- [CRITICAL SAFETY CLAMP] ---
-            // This is the most important part of the fix. It ensures the AI's *target* is always
-            // within its playable area, preventing it from ever trying to move into or get stuck on a wall.
+            // [CRITICAL SAFETY CLAMP]
+            // This ensures the AI's target is always valid and within its playable zone.
+            // This is the core logic that prevents it from ever getting stuck on a wall.
             targetX = Math.max(opponent.radius, Math.min(width - opponent.radius, targetX));
             targetY = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, targetY));
 
-
-            // --- Smoothed Movement Logic ---
-            // Calculate the vector from the AI paddle's current position to its desired target position.
+            // --- Movement Calculation ---
             const dx = targetX - opponent.x;
             const dy = targetY - opponent.y;
 
-            // Apply a fraction of the distance as movement for this frame. This creates a smooth ease-in effect.
-            opponent.x += dx * AI_SPEED;
-            opponent.y += dy * AI_SPEED;
+            // Use a higher speed when attacking and a calmer speed when defending/resetting.
+            const speed = (puck.y < height / 2) ? AI_SPEED * 1.5 : AI_SPEED * 0.8;
             
-            // Calculate the AI's velocity for the physics engine based on its actual movement this frame.
-            // This is crucial for making the AI's hits feel powerful and realistic.
+            opponent.x += dx * speed;
+            opponent.y += dy * speed;
+            
+            // Calculate the AI's velocity for this frame, used by the physics engine.
             opponent.vx = opponent.x - prevX;
             opponent.vy = opponent.y - prevY;
         }
@@ -428,9 +439,11 @@
             if (puck.x < puck.radius) {
                 puck.x = puck.radius;
                 puck.vx *= -1;
+                createParticles(puck.x, puck.y, '#ffffff');
             } else if (puck.x > width - puck.radius) {
                 puck.x = width - puck.radius;
                 puck.vx *= -1;
+                createParticles(puck.x, puck.y, '#ffffff');
             }
 
             // Goal check
@@ -465,8 +478,10 @@
         function handleGoal(scorer) {
             if (scorer === 'player') {
                 gameState.scores.p1++;
+                createParticles(puck.x, puck.y, '#00ffff');
             } else {
                 gameState.scores.p2++;
+                createParticles(puck.x, puck.y, '#ff0080');
             }
 
             updateScoreUI();
@@ -490,6 +505,9 @@
         }
         
         
+        /**
+         * High-Impact Physics Engine. This model provides a more satisfying "smash" effect.
+         */
         function resolvePaddleCollision(paddle, isOpponent = false) {
             const dx = puck.x - paddle.x;
             const dy = puck.y - paddle.y;
@@ -497,46 +515,31 @@
             const minDistance = puck.radius + paddle.radius;
             
             if (distance < minDistance) {
-                // 1. Resolve Overlap
-                const overlap = minDistance - distance;
-                const angle = Math.atan2(dy, dx);
-                // Push the puck out of the paddle
-                puck.x += Math.cos(angle) * overlap;
-                puck.y += Math.sin(angle) * overlap;
+                createParticles(puck.x, puck.y, isOpponent ? '#ff0080' : '#00ffff');
                 
-                // 2. Calculate Paddle Velocity
-                let paddleVx, paddleVy;
-                if (isOpponent) {
-                    paddleVx = opponent.vx;
-                    paddleVy = opponent.vy;
-                } else {
-                    // Player's velocity is the change in position since the last frame
-                    paddleVx = player.x - player.prevX;
-                    paddleVy = player.y - player.prevY;
-                }
-
-                // 3. Realistic Momentum Transfer (Elastic Collision)
+                // 1. Normal and Tangent Vectors
                 const normalX = dx / distance;
                 const normalY = dy / distance;
 
-                // Project velocities onto the normal
-                const paddleVelNormal = paddleVx * normalX + paddleVy * normalY;
-                const puckVelNormal = puck.vx * normalX + puck.vy * normalY;
+                // 2. Separate the objects to prevent sticking
+                const overlap = minDistance - distance;
+                puck.x += normalX * overlap;
+                puck.y += normalY * overlap;
+                
+                // 3. Calculate Paddle Velocity
+                let paddleVx = isOpponent ? opponent.vx : (player.x - player.prevX);
+                let paddleVy = isOpponent ? opponent.vy : (player.y - player.prevY);
 
-                // Conservation of momentum and kinetic energy formula for 1D collision
+                // 4. Decompose puck and paddle velocities into normal and tangential components
+                const puckVelNormal = puck.vx * normalX + puck.vy * normalY;
+                const paddleVelNormal = paddleVx * normalX + paddleVy * normalY;
+
+                // 5. Calculate new normal velocities (Conservation of Momentum)
                 const newPuckVelNormal = (puckVelNormal * (puck.mass - paddle.mass) + 2 * paddle.mass * paddleVelNormal) / (puck.mass + paddle.mass);
 
-                // Update puck velocity based on the new normal velocity
+                // 6. Update the puck's velocity
                 puck.vx += (newPuckVelNormal - puckVelNormal) * normalX;
                 puck.vy += (newPuckVelNormal - puckVelNormal) * normalY;
-                
-                // 4. Cap the puck's speed to prevent extreme velocities
-                const MAX_SPEED = width / 25; // Scale max speed with screen size
-                const speed = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
-                if (speed > MAX_SPEED) {
-                    puck.vx = (puck.vx / speed) * MAX_SPEED;
-                    puck.vy = (puck.vy / speed) * MAX_SPEED;
-                }
             }
         }
         
@@ -565,6 +568,53 @@
             }
         }
         
+
+        /**
+         * Creates a burst of particles at a specific location.
+         */
+        function createParticles(x, y, color) {
+            const particleCount = 15;
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 1.0, // Lifespan of the particle
+                    color: color,
+                    size: Math.random() * 3 + 1
+                });
+            }
+        }
+
+        /**
+         * Updates and draws all active particles.
+         */
+        function drawParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.05;
+
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 10;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            // Reset global alpha and shadow blur for other drawing functions
+            ctx.globalAlpha = 1.0;
+            ctx.shadowBlur = 0;
+        }
+
+        
         // --- 4. DRAWING & UI ---
         
         /**
@@ -577,6 +627,7 @@
             drawPaddle(opponent, '#ff0080'); // Opponent (Red)
             drawPaddle(player, '#00ffff');   // Player (Cyan)
             drawPuck();
+            drawParticles();
         }
 
         function drawTable() {
