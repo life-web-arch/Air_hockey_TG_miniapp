@@ -193,6 +193,7 @@
         const FRICTION = 0.991;
         const PADDLE_SPEED = 0.5; // Interpolation factor for smoothness (higher is more responsive)
         const AI_SPEED = 0.1;
+        const AI_DIFFICULTY = 0.6; // A value between 0 (easy) and 1 (perfectly accurate). 0.6 is a good balance.
 
         const puck = { x: 0, y: 0, radius: 0, vx: 0, vy: 0, mass: 1 };
         const player = { x: 0, y: 0, radius: 0, targetX: 0, targetY: 0, prevX: 0, prevY: 0, mass: 10 };
@@ -307,7 +308,9 @@
         function resetGame(scorer = 'opponent') {
             puck.x = width / 2;
             puck.y = height / 2;
-            puck.vx = 0;
+            
+            // [MODIFICATION] Add a slight random horizontal velocity to the serve.
+            puck.vx = (Math.random() - 0.5) * 4;
             
             // [MODIFICATION] Scale the puck's serve speed with the screen height for a consistent game feel.
             const serveSpeed = height * 0.01;
@@ -368,8 +371,8 @@
         }
         
         /**
-         * Advanced, State-Based AI Engine v3. This version is designed to be much more human-like,
-         * with distinct offensive and defensive behaviors to prevent freezing and own-goals.
+         * Advanced State-Based AI Engine v4 (Final). This version adds shot randomness
+         * and a difficulty parameter for more human-like, unpredictable gameplay.
          */
         function updateAI() {
             // Store previous position to calculate velocity for realistic collisions
@@ -377,50 +380,46 @@
             const prevY = opponent.y;
 
             let targetX, targetY;
-            const defensiveLineY = height * 0.25; // A safe line to defend from
+            const defensiveLineY = height * 0.25;
             const centerStanceX = width / 2;
 
             // --- AI DECISION TREE ---
 
-            if (puck.y < height * 0.5 && puck.vy < 1) {
+            if (puck.y < height * 0.55 && puck.vy < 2) {
                 // --- OFFENSIVE MODE ---
-                // The puck is in our half and not moving quickly away from us. Let's attack it!
-                // We will aim for a position slightly behind the puck to strike it towards the player.
-                targetX = puck.x;
-                targetY = puck.y + puck.radius; // Aim slightly below the puck to hit it down.
+                // Puck is in our half and not moving away too fast. Let's attack!
 
-            } else if (puck.vy > 0 && puck.y > height * 0.4) {
-                // --- DEFENSIVE MODE ---
-                // The puck is moving towards our goal from the player's side.
-                // Let's retreat to our defensive line and mirror the puck's X position to block.
-                targetX = puck.x;
-                targetY = defensiveLineY;
+                // [CRITICAL RANDOMNESS LOGIC]
+                // Instead of targeting the puck's dead center, we introduce a calculated "error".
+                // This makes the AI hit the puck off-center, creating unpredictable bank shots.
+                // The AI_DIFFICULTY constant controls the maximum possible "error".
+                const maxError = puck.radius * (1 - AI_DIFFICULTY);
+                const errorX = (Math.random() - 0.5) * maxError * 2;
+                
+                targetX = puck.x + errorX;
+                targetY = puck.y + puck.radius; // Aim slightly below the puck
 
             } else {
-                // --- NEUTRAL/RESET MODE ---
-                // The puck is slow, on the other side of the table, or moving away.
-                // Let's return to the center of our defensive line to be ready for anything.
+                // --- DEFENSIVE / RESET MODE ---
+                // Puck is in the player's half or moving away. Return to a defensive stance.
                 targetX = centerStanceX;
                 targetY = defensiveLineY;
             }
 
-            // [CRITICAL SAFETY CLAMP]
-            // This ensures the AI's target is always valid and within its playable zone.
-            // This is the core logic that prevents it from ever getting stuck on a wall.
+            // [SAFETY CLAMP]
+            // Ensure the AI's target is always within its playable area.
             targetX = Math.max(opponent.radius, Math.min(width - opponent.radius, targetX));
             targetY = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, targetY));
 
             // --- Movement Calculation ---
             const dx = targetX - opponent.x;
             const dy = targetY - opponent.y;
-
-            // Use a higher speed when attacking and a calmer speed when defending/resetting.
             const speed = (puck.y < height / 2) ? AI_SPEED * 1.5 : AI_SPEED * 0.8;
             
             opponent.x += dx * speed;
             opponent.y += dy * speed;
             
-            // Calculate the AI's velocity for this frame, used by the physics engine.
+            // Calculate the AI's velocity for the physics engine
             opponent.vx = opponent.x - prevX;
             opponent.vy = opponent.y - prevY;
         }
@@ -588,20 +587,28 @@
         }
 
         /**
-         * Updates and draws all active particles.
+         * Updates and draws all active particles with gravity and color variation.
          */
         function drawParticles() {
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
                 p.x += p.vx;
                 p.y += p.vy;
-                p.life -= 0.05;
+                p.vy += 0.1; // Apply a small amount of "gravity" to make sparks fall
+                p.life -= 0.04;
 
                 if (p.life <= 0) {
                     particles.splice(i, 1);
                 } else {
                     ctx.globalAlpha = p.life;
-                    ctx.fillStyle = p.color;
+                    
+                    // Randomize color slightly for a more fiery/sparky effect
+                    if (p.color === '#ffffff') {
+                         ctx.fillStyle = `rgba(255, 255, ${Math.floor(Math.random() * 100 + 155)}, ${p.life})`;
+                    } else {
+                         ctx.fillStyle = p.color;
+                    }
+                    
                     ctx.shadowColor = p.color;
                     ctx.shadowBlur = 10;
                     ctx.beginPath();
