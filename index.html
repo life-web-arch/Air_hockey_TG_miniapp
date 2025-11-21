@@ -566,14 +566,14 @@
             }
             gameOverScreen.style.display = 'flex';
             
-            // --- [CRITICAL FIX] ---
+            // --- [CRITICAL MODIFICATION] ---
             // Report the final game state to the server REGARDLESS of the mode.
-            // This is how the bot knows the AI game has ended and who won.
+            // This is how the bot knows the game has ended and who won.
             updateGameStateOnServer();
 
-            // --- [CRITICAL FIX] ---
+            // --- [CRITICAL MODIFICATION] ---
             // Automatically close the Mini App after a few seconds so the user
-            // is returned to the bot interface to see the final results.
+            // is returned to the bot interface to see the final results and celebration image.
             setTimeout(() => {
                 tg.close();
             }, 4000); // Wait 4 seconds for the user to see the Game Over screen
