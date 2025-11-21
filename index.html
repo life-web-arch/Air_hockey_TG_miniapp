@@ -543,28 +543,40 @@
         }
         
         /**
-         * Ends the game and displays the result.
+         * Ends the game, displays the result, reports the final state to the backend, and closes the app.
          */
         function endGame(winnerId) {
+            if (!isGameRunning) return; // Prevent this function from running more than once
+
             isGameRunning = false;
             cancelAnimationFrame(animationFrameId);
-            if (networkUpdateInterval) clearInterval(networkUpdateInterval);
+            if (networkUpdateInterval) {
+                clearInterval(networkUpdateInterval);
+            }
 
             gameState.winner_id = winnerId;
             
+            // --- Final UI Update ---
             if (winnerId === user_id) {
                 gameOverTitle.textContent = "YOU WIN!";
                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
             } else {
                 gameOverTitle.textContent = "YOU LOSE";
-                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
+                gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
             }
             gameOverScreen.style.display = 'flex';
             
-            // Send final state to server to log the winner
-            if(gameMode === 'multiplayer') {
-                 updateGameStateOnServer();
-            }
+            // --- [CRITICAL FIX] ---
+            // Report the final game state to the server REGARDLESS of the mode.
+            // This is how the bot knows the AI game has ended and who won.
+            updateGameStateOnServer();
+
+            // --- [CRITICAL FIX] ---
+            // Automatically close the Mini App after a few seconds so the user
+            // is returned to the bot interface to see the final results.
+            setTimeout(() => {
+                tg.close();
+            }, 4000); // Wait 4 seconds for the user to see the Game Over screen
         }
         
 
