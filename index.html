@@ -261,33 +261,42 @@
         }
 
         /**
-         * Resizes the canvas to fit the window while maintaining aspect ratio.
+         * Resizes the canvas to fit the window while maintaining a vertical aspect ratio.
          */
         function resizeCanvas() {
+            // Enforce a vertical aspect ratio (e.g., 9:16), perfect for mobile.
             const aspectRatio = 9 / 16;
             const screenWidth = window.innerWidth;
             const screenHeight = window.innerHeight;
 
-            if (screenHeight / screenWidth > aspectRatio) {
+            // Determine the limiting dimension (width or height)
+            if (screenWidth / screenHeight < aspectRatio) {
+                // Screen is "taller" or "thinner" than our desired aspect ratio, so width is the limiter.
                 width = screenWidth;
-                height = screenWidth * aspectRatio;
+                height = width / aspectRatio;
             } else {
+                // Screen is "wider" than our desired aspect ratio, so height is the limiter.
                 height = screenHeight;
-                width = screenHeight / aspectRatio;
+                width = height * aspectRatio;
             }
             
-            width = Math.floor(width);
-            height = Math.floor(height);
+            width = Math.floor(width) - 4; // Subtract a few pixels for padding/border
+            height = Math.floor(height) - 4;
 
             container.style.width = `${width}px`;
             container.style.height = `${height}px`;
             canvas.width = width;
             canvas.height = height;
             
-            // Recalculate entity sizes
-            puck.radius = width * 0.03;
-            player.radius = width * 0.07;
-            opponent.radius = width * 0.07;
+            // Recalculate entity sizes based on the new dimensions
+            puck.radius = width * 0.04; // Slightly larger puck for better visibility
+            player.radius = width * 0.1;
+            opponent.radius = width * 0.1;
+
+            // If the game has not yet started, reset positions to fit the new layout
+            if (!isGameRunning) {
+                resetGame();
+            }
         }
 
         /**
@@ -346,23 +355,48 @@
             syncLocalStateToServerObjects();
         }
         
+
         /**
-         * Simple AI logic for solo mode.
+         * Advanced AI logic for solo mode.
+         * This version clamps the target to prevent getting stuck and slows down near the target.
          */
         function updateAI() {
-            // AI tries to match the puck's x position and stay in its half
+            // --- 1. Determine the AI's Target ---
             let targetX = puck.x;
-            
-            // Add a defensive/offensive behavior
-            let targetY = height * 0.15; // Default defensive position
-            if (puck.y < height / 2) {
-                targetY = puck.y; // Attack the puck
+            let targetY;
+
+            // Offensive vs. Defensive Stance
+            if (puck.y < height * 0.6) {
+                // Puck is on or approaching the AI's side, play offensively.
+                // Try to get behind the puck to hit it forward.
+                targetY = puck.y - puck.radius;
+            } else {
+                // Puck is on the player's side, return to a defensive position.
+                targetY = height * 0.15;
             }
 
-            opponent.x += (targetX - opponent.x) * AI_SPEED;
-            opponent.y += (targetY - opponent.y) * AI_SPEED;
-            
-             // Clamp opponent to its half
+            // --- 2. [CRITICAL FIX] Clamp the AI's TARGET position ---
+            // This makes the AI "aware" of the walls and prevents it from trying to move into them.
+            targetX = Math.max(opponent.radius, Math.min(width - opponent.radius, targetX));
+            targetY = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, targetY));
+
+            // --- 3. Calculate Smoothed Movement ---
+            const dx = targetX - opponent.x;
+            const dy = targetY - opponent.y;
+            const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
+
+            // Dynamically adjust speed: slow down when very close to the target to prevent jittering.
+            let currentAiSpeed = AI_SPEED;
+            if (distanceToTarget < 50) {
+                currentAiSpeed *= (distanceToTarget / 50);
+            }
+
+            // Apply the movement
+            opponent.x += dx * currentAiSpeed;
+            opponent.y += dy * currentAiSpeed;
+
+            // --- 4. Final Position Clamp (as a safety measure) ---
+            // This ensures the paddle never glitches outside its designated half of the board.
             opponent.x = Math.max(opponent.radius, Math.min(width - opponent.radius, opponent.x));
             opponent.y = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, opponent.y));
         }
