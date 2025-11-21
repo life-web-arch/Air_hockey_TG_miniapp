@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Neon Air Hockey</title>
+    <!-- Telegram Web App script -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* --- Basic Setup & Resets --- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none; /* Critical for preventing scroll/zoom on mobile */
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0c0c1e; /* Dark blue-purple background */
+            color: #fff;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* --- Game Container & Canvas --- */
+        #game-container {
+            position: relative;
+            touch-action: none;
+            border-radius: 15px;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.3), 0 0 80px rgba(255, 0, 128, 0.3);
+            border: 2px solid #333;
+        }
+
+        canvas {
+            display: block;
+            background: radial-gradient(circle, #2a2a4a 0%, #0c0c1e 100%);
+            border-radius: 12px;
+        }
+
+        /* --- UI Overlays (Loading, Start, End Screens) --- */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(12, 12, 30, 0.9);
+            backdrop-filter: blur(5px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            z-index: 10;
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        #loading-screen h1, #start-screen h1, #game-over-screen h1 {
+            font-size: 3rem;
+            text-shadow: 0 0 10px #fff;
+            margin-bottom: 20px;
+        }
+
+        #loading-screen p, #start-screen p, #game-over-screen p {
+            font-size: 1.2rem;
+            color: #ccc;
+            margin-bottom: 30px;
+        }
+
+        .button {
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #fff;
+            background: #ff0080;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            text-shadow: 0 0 10px #fff;
+            box-shadow: 0 0 20px #ff0080;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .button:hover, .button:active {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px #ff0080, 0 0 50px #ff0080;
+        }
+        
+        #game-over-screen .button {
+            background-color: #00ffff;
+            box-shadow: 0 0 20px #00ffff;
+        }
+         #game-over-screen .button:hover, #game-over-screen .button:active {
+             box-shadow: 0 0 30px #00ffff, 0 0 50px #00ffff;
+         }
+
+        /* --- In-Game Score Display --- */
+        #score-display {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            font-size: 4rem;
+            font-weight: 900;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        #player-score {
+            color: #00ffff;
+            text-shadow: 0 0 20px #00ffff;
+        }
+
+        #opponent-score {
+            color: #ff0080;
+            text-shadow: 0 0 20px #ff0080;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- Score Display -->
+        <div id="score-display">
+            <div id="opponent-score">0</div>
+            <div id="player-score">0</div>
+        </div>
+        
+        <!-- Loading/Error Screen -->
+        <div id="loading-screen" class="overlay">
+            <h1>Loading Game...</h1>
+            <p id="loading-text">Connecting to the game server...</p>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="overlay" style="display: none;">
+            <h1 id="game-over-title">Game Over</h1>
+            <p id="game-over-text">Thank you for playing!</p>
+            <button id="close-button" class="button">Close</button>
+        </div>
+    </div>
+
+<script>
+    // --- WRAP ENTIRE SCRIPT TO PREVENT GLOBAL SCOPE POLLUTION ---
+    (function() {
+        "use strict";
+
+        // --- 1. INITIALIZATION & SETUP ---
+
+        // Telegram Web App SDK
+        const tg = window.Telegram.WebApp;
+
+        // DOM Elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('game-container');
+        const loadingScreen = document.getElementById('loading-screen');
+        const loadingText = document.getElementById('loading-text');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const gameOverTitle = document.getElementById('game-over-title');
+        const gameOverText = document.getElementById('game-over-text');
+        const playerScoreEl = document.getElementById('player-score');
+        const opponentScoreEl = document.getElementById('opponent-score');
+        const closeButton = document.getElementById('close-button');
+
+        // Game state variables
+        let width, height;
+        let gameMode = 'solo'; // 'solo' or 'multiplayer'
+        let isGameRunning = false;
+        let animationFrameId;
+
+        // Networking state
+        let room_code, user_id, token, tunnel_url, tunnel_pwd;
+        let networkUpdateInterval;
+        const NETWORK_UPDATE_RATE = 30; // ms, roughly 33 updates per second
+        
+        // --- 2. GAME ENTITIES & CONSTANTS ---
+
+        const WIN_SCORE = 7;
+        const FRICTION = 0.991;
+        const PADDLE_SPEED = 0.3; // Interpolation factor for smoothness
+        const AI_SPEED = 0.1;
+
+        const puck = { x: 0, y: 0, radius: 0, vx: 0, vy: 0 };
+        const player = { x: 0, y: 0, radius: 0, targetX: 0, targetY: 0 };
+        const opponent = { x: 0, y: 0, radius: 0 };
+
+        let gameState = {
+            puck: { x: 0, y: 0, vx: 0, vy: 0 },
+            p1: { x: 0, y: 0 }, // Player 1 (this client)
+            p2: { x: 0, y: 0 }, // Player 2 (opponent)
+            scores: { p1: 0, p2: 0 },
+            winner_id: null
+        };
+        
+        // --- 3. CORE LOGIC ---
+
+        /**
+         * Main entry point when the page loads.
+         */
+        function initialize() {
+            tg.ready();
+            tg.expand(); // Expand the web app to full height
+
+            // Parse URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            room_code = urlParams.get('room_code');
+            user_id = parseInt(urlParams.get('user_id'), 10);
+            token = urlParams.get('token');
+            gameMode = urlParams.get('mode'); // 'solo' or 'multiplayer'
+            tunnel_url = urlParams.get('tunnel_url');
+            tunnel_pwd = urlParams.get('tunnel_pwd');
+
+            if (!room_code || !user_id || !token || !gameMode || !tunnel_url || !tunnel_pwd) {
+                showError("CRITICAL ERROR: Missing game parameters in URL. This app must be launched from the bot.");
+                return;
+            }
+
+            setupEventListeners();
+            resizeCanvas();
+            resetGame();
+
+            // Hide loading screen and start the game
+            loadingScreen.style.display = 'none';
+            isGameRunning = true;
+            loop();
+            
+            // Start networking for multiplayer
+            if (gameMode === 'multiplayer') {
+                networkUpdateInterval = setInterval(networkUpdateLoop, NETWORK_UPDATE_RATE);
+            }
+        }
+
+        /**
+         * Sets up all necessary event listeners.
+         */
+        function setupEventListeners() {
+            window.addEventListener('resize', resizeCanvas);
+            
+            // Mouse controls
+            canvas.addEventListener('mousemove', handlePointerMove);
+            
+            // Touch controls
+            canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
+
+            // Close button
+            closeButton.addEventListener('click', () => tg.close());
+        }
+
+        /**
+         * Resizes the canvas to fit the window while maintaining aspect ratio.
+         */
+        function resizeCanvas() {
+            const aspectRatio = 9 / 16;
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+
+            if (screenHeight / screenWidth > aspectRatio) {
+                width = screenWidth;
+                height = screenWidth * aspectRatio;
+            } else {
+                height = screenHeight;
+                width = screenHeight / aspectRatio;
+            }
+            
+            width = Math.floor(width);
+            height = Math.floor(height);
+
+            container.style.width = `${width}px`;
+            container.style.height = `${height}px`;
+            canvas.width = width;
+            canvas.height = height;
+            
+            // Recalculate entity sizes
+            puck.radius = width * 0.03;
+            player.radius = width * 0.07;
+            opponent.radius = width * 0.07;
+        }
+
+        /**
+         * Resets all game entities and scores to their starting state.
+         * @param {string} scorer - 'player' or 'opponent', determines puck serve direction.
+         */
+        function resetGame(scorer = 'opponent') {
+            puck.x = width / 2;
+            puck.y = height / 2;
+            puck.vx = 0;
+            puck.vy = scorer === 'player' ? -5 : 5; // Serve the puck
+
+            player.x = width / 2;
+            player.y = height - (height * 0.15);
+            player.targetX = player.x;
+            player.targetY = player.y;
+
+            opponent.x = width / 2;
+            opponent.y = height * 0.15;
+
+            // Update state for server
+            syncLocalStateToServerObjects();
+        }
+        
+        /**
+         * The main game loop, called by requestAnimationFrame.
+         */
+        function loop() {
+            if (!isGameRunning) return;
+            
+            update();
+            draw();
+            
+            animationFrameId = requestAnimationFrame(loop);
+        }
+
+        /**
+         * Updates all game logic for one frame.
+         */
+        function update() {
+            // Player paddle movement (smoothed)
+            player.x += (player.targetX - player.x) * PADDLE_SPEED;
+            player.y += (player.targetY - player.y) * PADDLE_SPEED;
+
+            if (gameMode === 'solo') {
+                updateAI();
+            }
+
+            // Puck physics
+            updatePuck();
+
+            // Collision detection
+            checkCollisions();
+
+            // Update game state object for server sync
+            syncLocalStateToServerObjects();
+        }
+        
+        /**
+         * Simple AI logic for solo mode.
+         */
+        function updateAI() {
+            // AI tries to match the puck's x position and stay in its half
+            let targetX = puck.x;
+            
+            // Add a defensive/offensive behavior
+            let targetY = height * 0.15; // Default defensive position
+            if (puck.y < height / 2) {
+                targetY = puck.y; // Attack the puck
+            }
+
+            opponent.x += (targetX - opponent.x) * AI_SPEED;
+            opponent.y += (targetY - opponent.y) * AI_SPEED;
+            
+             // Clamp opponent to its half
+            opponent.x = Math.max(opponent.radius, Math.min(width - opponent.radius, opponent.x));
+            opponent.y = Math.max(opponent.radius, Math.min(height / 2 - opponent.radius, opponent.y));
+        }
+        
+        /**
+         * Updates puck position, applies friction, and checks wall bounces/goals.
+         */
+        function updatePuck() {
+            puck.x += puck.vx;
+            puck.y += puck.vy;
+
+            puck.vx *= FRICTION;
+            puck.vy *= FRICTION;
+            
+            // Wall bounces (left/right)
+            if (puck.x < puck.radius) {
+                puck.x = puck.radius;
+                puck.vx *= -1;
+            } else if (puck.x > width - puck.radius) {
+                puck.x = width - puck.radius;
+                puck.vx *= -1;
+            }
+
+            // Goal check
+            const goalWidth = width * 0.4;
+            const goalLeft = (width - goalWidth) / 2;
+            const goalRight = (width + goalWidth) / 2;
+
+            // Opponent goal (player scores)
+            if (puck.y < puck.radius) {
+                if (puck.x > goalLeft && puck.x < goalRight) {
+                    handleGoal('player');
+                } else {
+                    puck.y = puck.radius;
+                    puck.vy *= -1;
+                }
+            }
+
+            // Player goal (opponent scores)
+            if (puck.y > height - puck.radius) {
+                 if (puck.x > goalLeft && puck.x < goalRight) {
+                    handleGoal('opponent');
+                } else {
+                    puck.y = height - puck.radius;
+                    puck.vy *= -1;
+                }
+            }
+        }
+        
+        /**
+         * Handles scoring, updates UI, checks for winner, and resets.
+         */
+        function handleGoal(scorer) {
+            if (scorer === 'player') {
+                gameState.scores.p1++;
+            } else {
+                gameState.scores.p2++;
+            }
+
+            updateScoreUI();
+            
+            if (gameState.scores.p1 >= WIN_SCORE) {
+                endGame(user_id);
+            } else if (gameState.scores.p2 >= WIN_SCORE) {
+                 // In multiplayer, the opponent's ID isn't known here, so send 0 as a special "not me" winner
+                endGame(gameMode === 'multiplayer' ? 0 : -1); // -1 for AI
+            } else {
+                resetGame(scorer);
+            }
+        }
+
+        /**
+         * Checks for and resolves collisions between puck and paddles.
+         */
+        function checkCollisions() {
+            resolvePaddleCollision(player);
+            resolvePaddleCollision(opponent);
+        }
+        
+        function resolvePaddleCollision(paddle) {
+            const dx = puck.x - paddle.x;
+            const dy = puck.y - paddle.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const minDistance = puck.radius + paddle.radius;
+            
+            if (distance < minDistance) {
+                // Resolve overlap
+                const overlap = minDistance - distance;
+                const angle = Math.atan2(dy, dx);
+                puck.x += Math.cos(angle) * overlap;
+                puck.y += Math.sin(angle) * overlap;
+                
+                // Elastic collision
+                const normalX = dx / distance;
+                const normalY = dy / distance;
+                const dotProduct = puck.vx * normalX + puck.vy * normalY;
+                
+                puck.vx -= 2 * dotProduct * normalX;
+                puck.vy -= 2 * dotProduct * normalY;
+
+                // Add a "kick" from paddle's momentum (approximated)
+                if (paddle === player) {
+                    puck.vx += (player.x - (player.x - (player.targetX-player.x)*PADDLE_SPEED*5)) * 0.1;
+                    puck.vy += (player.y - (player.y - (player.targetY-player.y)*PADDLE_SPEED*5)) * 0.1;
+                }
+            }
+        }
+        
+        /**
+         * Ends the game and displays the result.
+         */
+        function endGame(winnerId) {
+            isGameRunning = false;
+            cancelAnimationFrame(animationFrameId);
+            if (networkUpdateInterval) clearInterval(networkUpdateInterval);
+
+            gameState.winner_id = winnerId;
+            
+            if (winnerId === user_id) {
+                gameOverTitle.textContent = "YOU WIN!";
+                gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
+            } else {
+                gameOverTitle.textContent = "YOU LOSE";
+                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
+            }
+            gameOverScreen.style.display = 'flex';
+            
+            // Send final state to server to log the winner
+            if(gameMode === 'multiplayer') {
+                 updateGameStateOnServer();
+            }
+        }
+        
+        // --- 4. DRAWING & UI ---
+        
+        /**
+         * Draws all game elements onto the canvas.
+         */
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+
+            drawTable();
+            drawPaddle(opponent, '#ff0080'); // Opponent (Red)
+            drawPaddle(player, '#00ffff');   // Player (Cyan)
+            drawPuck();
+        }
+
+        function drawTable() {
+            const goalWidth = width * 0.4;
+            ctx.strokeStyle = '#4a4a8a';
+            ctx.lineWidth = 4;
+
+            // Center line
+            ctx.beginPath();
+            ctx.moveTo(0, height / 2);
+            ctx.lineTo(width, height / 2);
+            ctx.stroke();
+
+            // Center circle
+            ctx.beginPath();
+            ctx.arc(width / 2, height / 2, width * 0.15, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Goals
+            ctx.lineWidth = 8;
+            ctx.strokeStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.moveTo((width - goalWidth) / 2, height);
+            ctx.lineTo((width + goalWidth) / 2, height);
+            ctx.stroke();
+            
+            ctx.strokeStyle = '#ff0080';
+            ctx.beginPath();
+            ctx.moveTo((width - goalWidth) / 2, 0);
+            ctx.lineTo((width + goalWidth) / 2, 0);
+            ctx.stroke();
+        }
+
+        function drawPaddle(paddle, color) {
+            ctx.beginPath();
+            ctx.arc(paddle.x, paddle.y, paddle.radius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 20;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            // Inner highlight
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.arc(paddle.x, paddle.y, paddle.radius * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawPuck() {
+            ctx.beginPath();
+            ctx.arc(puck.x, puck.y, puck.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 25;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function updateScoreUI() {
+            playerScoreEl.textContent = gameState.scores.p1;
+            opponentScoreEl.textContent = gameState.scores.p2;
+        }
+        
+        function showError(message) {
+            loadingText.textContent = message;
+            loadingScreen.style.display = 'flex';
+        }
+
+        // --- 5. INPUT HANDLING ---
+
+        function handlePointerMove(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+
+            if (e.touches) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+
+            player.targetX = clientX - rect.left;
+            player.targetY = clientY - rect.top;
+
+            // Clamp player to their half of the table
+            player.targetX = Math.max(player.radius, Math.min(width - player.radius, player.targetX));
+            player.targetY = Math.max(height / 2 + player.radius, Math.min(height - player.radius, player.targetY));
+        }
+
+        // --- 6. NETWORKING (MULTIPLAYER ONLY) ---
+
+        /**
+         * Main networking loop that sends our state and gets opponent's state.
+         */
+        async function networkUpdateLoop() {
+            if (!isGameRunning) return;
+            await updateGameStateOnServer();
+            await fetchGameStateFromServer();
+        }
+        
+        /**
+         * Copies local entity positions into the server-bound gameState object.
+         */
+        function syncLocalStateToServerObjects() {
+            gameState.puck = { x: puck.x, y: puck.y, vx: puck.vx, vy: puck.vy };
+            gameState.p1 = { x: player.x, y: player.y };
+            gameState.p2 = { x: opponent.x, y: opponent.y };
+            // Scores are already in gameState.scores
+        }
+        
+        /**
+         * Fetches the latest game state from the server.
+         */
+        async function fetchGameStateFromServer() {
+            try {
+                const response = await fetch(`${tunnel_url}/airhockey/get_state?room_code=${room_code}&user_id=${user_id}&token=${token}`);
+                if (!response.ok) {
+                    throw new Error(`Server responded with status ${response.status}`);
+                }
+                const serverState = await response.json();
+                
+                // Update local state based on server data.
+                // We determine which player is us vs them.
+                const playerKeys = Object.keys(serverState.scores);
+                const p1_server_id = parseInt(playerKeys[0], 10);
+                
+                if (user_id === p1_server_id) {
+                    opponent.x = serverState.p2.x;
+                    opponent.y = serverState.p2.y;
+                    gameState.scores.p2 = serverState.scores[playerKeys[1]];
+                } else {
+                    opponent.x = serverState.p1.x;
+                    opponent.y = serverState.p1.y;
+                    gameState.scores.p2 = serverState.scores[playerKeys[0]];
+                }
+                
+                // The puck is authoritatively updated from the server to prevent desync
+                puck.x = serverState.puck.x;
+                puck.y = serverState.puck.y;
+                puck.vx = serverState.puck.vx;
+                puck.vy = serverState.puck.vy;
+                
+                updateScoreUI();
+
+            } catch (error) {
+                console.error("Fetch state failed:", error);
+                // Could implement logic to show a "reconnecting" message
+            }
+        }
+        
+        /**
+         * Sends the current client's state to the server.
+         */
+        async function updateGameStateOnServer() {
+            try {
+                await fetch(`${tunnel_url}/airhockey/update_state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        room_code, user_id, token,
+                        state: gameState
+                    })
+                });
+            } catch (error) {
+                console.error("Update state failed:", error);
+            }
+        }
+
+        // --- 7. START THE APPLICATION ---
+        window.addEventListener('load', initialize);
+
+    })();
+</script>
+</body>
+</html>
