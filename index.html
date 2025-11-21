@@ -190,14 +190,14 @@
         // --- 2. GAME ENTITIES & CONSTANTS ---
 
         const WIN_SCORE = 7;
-        const FRICTION = 0.991;
+        const FRICTION = 0.985;
         const PADDLE_SPEED = 0.5; // Interpolation factor for smoothness (higher is more responsive)
         const AI_SPEED = 0.1;
         const AI_DIFFICULTY = 0.6; // A value between 0 (easy) and 1 (perfectly accurate). 0.6 is a good balance.
 
         const puck = { x: 0, y: 0, radius: 0, vx: 0, vy: 0, mass: 1 };
-        const player = { x: 0, y: 0, radius: 0, targetX: 0, targetY: 0, prevX: 0, prevY: 0, mass: 10 };
-        const opponent = { x: 0, y: 0, radius: 0, vx: 0, vy: 0, mass: 10 }; // AI now has velocity properties
+        const player = { x: 0, y: 0, radius: 0, targetX: 0, targetY: 0, prevX: 0, prevY: 0, mass: 5 };
+        const opponent = { x: 0, y: 0, radius: 0, vx: 0, vy: 0, mass: 5 }; // AI now has velocity properties
 
         let gameState = {
             puck: { x: 0, y: 0, vx: 0, vy: 0 },
@@ -437,11 +437,11 @@
             // Wall bounces (left/right)
             if (puck.x < puck.radius) {
                 puck.x = puck.radius;
-                puck.vx *= -1;
+                puck.vx *= -0.95;
                 createParticles(puck.x, puck.y, '#ffffff');
             } else if (puck.x > width - puck.radius) {
                 puck.x = width - puck.radius;
-                puck.vx *= -1;
+                puck.vx *= -0.95;
                 createParticles(puck.x, puck.y, '#ffffff');
             }
 
@@ -456,7 +456,7 @@
                     handleGoal('player');
                 } else {
                     puck.y = puck.radius;
-                    puck.vy *= -1;
+                    puck.vy *= -0.95;
                 }
             }
 
@@ -466,7 +466,7 @@
                     handleGoal('opponent');
                 } else {
                     puck.y = height - puck.radius;
-                    puck.vy *= -1;
+                    puck.vy *= -0.95;
                 }
             }
         }
