@@ -1,3 +1,6 @@
+
+#Air-hockey bellugames TG bot (minjapp)
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -565,9 +568,10 @@
                 gameOverText.textContent = `Final Score: ${gameState.scores.p1} - ${gameState.scores.p2}`;
             }
             
-            // Show "Sending..." status
+            // --- [MODIFICATION START] ---
+            // Show "Sending..." status and hide the close button until the process is complete or failed.
             const closeBtn = document.getElementById('close-button');
-            if(closeBtn) closeBtn.style.display = 'none'; // Hide close button initially
+            if(closeBtn) closeBtn.style.display = 'none';
             
             const statusP = document.createElement('p');
             statusP.textContent = "📡 Sending results to bot...";
@@ -577,29 +581,35 @@
             
             gameOverScreen.style.display = 'flex';
             
-            // [CRITICAL FIX] Retry loop to ensure data reaches the server
+            // Retry loop to ensure data reaches the server
             let sentSuccessfully = false;
-            for (let i = 0; i < 5; i++) { // Try 5 times
+            for (let i = 0; i < 5; i++) { // Try up to 5 times
                 try {
-                    console.log(`Attempt ${i+1}: Sending final state...`);
+                    console.log(`Attempt ${i+1}: Sending final state to server...`);
                     const response = await updateGameStateOnServer();
                     if (response && response.ok) {
                         sentSuccessfully = true;
-                        statusP.textContent = "✅ Results Sent! Closing...";
-                        console.log("Server acknowledged final state.");
-                        break;
+                        statusP.textContent = "✅ Results Sent! The game will close shortly.";
+                        console.log("Server successfully acknowledged the final game state.");
+                        break; // Exit loop on success
                     }
                 } catch (e) {
-                    console.error("Failed to send final state:", e);
-                    statusP.textContent = `⚠️ Retrying connection (${i+1}/5)...`;
-                    await new Promise(r => setTimeout(r, 1000)); // Wait 1s before retry
+                    console.error(`Attempt ${i+1} failed to send final state:`, e);
+                    statusP.textContent = `⚠️ Connection issue. Retrying (${i+2}/5)...`;
+                    await new Promise(r => setTimeout(r, 1500)); // Wait 1.5s before retrying
                 }
             }
 
-            // Close app only after attempt or success
+            if (!sentSuccessfully) {
+                statusP.textContent = "❌ Could not send results. Please close manually.";
+                if(closeBtn) closeBtn.style.display = 'block'; // Show button if sending failed
+            }
+
+            // Close the app automatically after a short delay to show the final message.
             setTimeout(() => {
                 tg.close();
-            }, 2000); 
+            }, 2500); 
+            // --- [MODIFICATION END] ---
         }
         
 
